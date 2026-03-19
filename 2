@@ -1,0 +1,141 @@
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  UpdateCommand,
+  PutCommand,
+  DynamoDBDocumentClient,
+  ScanCommand,
+  DeleteCommand,
+} from "@aws-sdk/lib-dynamodb";
+
+const client = new DynamoDBClient({});
+const docClient = DynamoDBDocumentClient.from(client);
+
+export const handler = async (event) => {
+  try {
+    console.log("EVENT:", JSON.stringify(event));
+
+    let response;
+
+    switch (event.httpMethod) {
+      case "GET":
+        response = await handleGetRequest();
+        break;
+      case "POST":
+        response = await handlePostRequest(event);
+        break;
+      case "PATCH":
+        response = await handlePatchRequest(event);
+        break;
+      case "DELETE":
+        response = await handleDeleteRequest(event);
+        break;
+      default:
+        response = responseJSON(400, "Invalid request type");
+    }
+
+    return response;
+  } catch (error) {
+    console.error("ERROR:", error);
+
+    return responseJSON(500, "Server Error", error.message);
+  }
+};
+
+// ================= HELPER =================
+const parseBody = (event) => {
+  try {
+    return event.body ? JSON.parse(event.body) : {};
+  } catch {
+    return {};
+  }
+};
+
+const responseJSON = (status, message, data = null) => {
+  return {
+    statusCode: status,
+    body: JSON.stringify({
+      message,
+      ...(data && { data }),
+    }),
+  };
+};
+
+// ================= GET =================
+const handleGetRequest = async () => {
+  const command = new ScanCommand({
+    TableName: "tasks",
+  });
+
+  const response = await docClient.send(command);
+
+  return responseJSON(200, "Success", response.Items);
+};
+
+// ================= POST =================
+const handlePostRequest = async (event) => {
+  const body = parseBody(event);
+
+  const name = body.name || "Tanpa Nama"; // AUTO isi kalau kosong
+  const completed = body.completed ?? false;
+
+  const command = new PutCommand({
+    TableName: "tasks",
+    Item: {
+      id: Date.now().toString(),
+      name,
+      completed,
+    },
+  });
+
+  await docClient.send(command);
+
+  return responseJSON(200, "Task created", { name, completed });
+};
+
+// ================= PATCH =================
+const handlePatchRequest = async (event) => {
+  const body = parseBody(event);
+
+  if (!body.id) {
+    return responseJSON(400, "ID is required");
+  }
+
+  const name = body.name || "Tanpa Nama";
+  const completed = body.completed ?? false;
+
+  const command = new UpdateCommand({
+    TableName: "tasks",
+    Key: { id: body.id },
+    UpdateExpression: "set #n = :n, completed = :c",
+    ExpressionAttributeNames: {
+      "#n": "name",
+    },
+    ExpressionAttributeValues: {
+      ":n": name,
+      ":c": completed,
+    },
+    ReturnValues: "ALL_NEW",
+  });
+
+  const response = await docClient.send(command);
+
+  return responseJSON(200, "Updated", response.Attributes);
+};
+
+// ================= DELETE =================
+const handleDeleteRequest = async (event) => {
+  const body = parseBody(event);
+
+  if (!body.id) {
+    return responseJSON(400, "ID is required");
+  }
+
+  const command = new DeleteCommand({
+    TableName: "tasks",
+    Key: { id: body.id },
+  });
+
+  await docClient.send(command);
+
+  return responseJSON(200, "Deleted");
+};
